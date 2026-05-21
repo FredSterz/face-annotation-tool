@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual Environment
+.venv/
+
+# VSCode
+.vscode/
+
+# OS files
+.DS_Store
+
+# Large datasets / outputs
+outputs/
+annotated_frames/
