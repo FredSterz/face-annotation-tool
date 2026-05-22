@@ -1,9 +1,10 @@
 import json
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -159,7 +160,7 @@ class MainWindow(QMainWindow):
         self.canvas = AnnotationCanvas()
 
         self.replace_hint_label = QLabel(
-            "Replace mode inactive"
+            "No buttons selected. Press [I] for shortcuts"
         )
         self.replace_hint_label.setAlignment(
             Qt.AlignCenter
@@ -215,7 +216,7 @@ class MainWindow(QMainWindow):
         """)
 
         self.save_button = QPushButton(
-            "Save Annotations"
+            "Save Annotations (Ctrl+S)"
         )
 
         self.save_button.clicked.connect(
@@ -307,11 +308,11 @@ class MainWindow(QMainWindow):
         # Enable/disable canvas editing
         # ---------------------------------
         self.annotation_details.keypoints_edit_requested.connect(
-            self.canvas.set_keypoint_editable
+            self.on_keypoints_edit_toggled
         )
 
         self.annotation_details.bbox_edit_requested.connect(
-            self.canvas.set_bbox_editable
+            self.on_bbox_edit_toggled
         )
 
         self.annotation_details.annotation_changed.connect(
@@ -320,6 +321,14 @@ class MainWindow(QMainWindow):
 
         self.annotation_details.keypoint_replace_requested.connect(
             self.on_keypoint_replace_requested
+        )
+
+        self.annotation_details.add_bbox_requested.connect(
+            self.on_add_bbox_requested
+        )
+
+        self.annotation_details.delete_bbox_requested.connect(
+            self.on_delete_bbox_requested
         )
 
         self.annotation_details.replace_all_requested.connect(
@@ -356,6 +365,109 @@ class MainWindow(QMainWindow):
             self._on_e_pressed
         )
 
+        self.previous_frame_shortcut = QShortcut(
+            QKeySequence("W"),
+            self,
+        )
+        self.previous_frame_shortcut.setContext(
+            Qt.WidgetWithChildrenShortcut
+        )
+        self.previous_frame_shortcut.activated.connect(
+            self.go_to_previous_frame
+        )
+
+        self.next_frame_shortcut = QShortcut(
+            QKeySequence("S"),
+            self,
+        )
+        self.next_frame_shortcut.setContext(
+            Qt.WidgetWithChildrenShortcut
+        )
+        self.next_frame_shortcut.activated.connect(
+            self.go_to_next_frame
+        )
+
+        self.new_bbox_shortcut = QShortcut(
+            QKeySequence("B"),
+            self,
+        )
+        self.new_bbox_shortcut.setContext(
+            Qt.WidgetWithChildrenShortcut
+        )
+        self.new_bbox_shortcut.activated.connect(
+            self.annotation_details.add_bbox_button.click
+        )
+
+        self.delete_bbox_shortcut = QShortcut(
+            QKeySequence(Qt.Key_Delete),
+            self,
+        )
+        self.delete_bbox_shortcut.setContext(
+            Qt.WidgetWithChildrenShortcut
+        )
+        self.delete_bbox_shortcut.activated.connect(
+            self.annotation_details.del_bbox_button.click
+        )
+
+        self.replace_all_mode_shortcut = QShortcut(
+            QKeySequence("R"),
+            self,
+        )
+        self.replace_all_mode_shortcut.setContext(
+            Qt.WidgetWithChildrenShortcut
+        )
+        self.replace_all_mode_shortcut.activated.connect(
+            self.annotation_details.replace_all_button.click
+        )
+
+        self.edit_keypoints_shortcut = QShortcut(
+            QKeySequence("C"),
+            self,
+        )
+        self.edit_keypoints_shortcut.setContext(
+            Qt.WidgetWithChildrenShortcut
+        )
+        self.edit_keypoints_shortcut.activated.connect(
+            self.annotation_details.edit_keypoints_button.click
+        )
+
+        self.edit_bbox_shortcut = QShortcut(
+            QKeySequence("V"),
+            self,
+        )
+        self.edit_bbox_shortcut.setContext(
+            Qt.WidgetWithChildrenShortcut
+        )
+        self.edit_bbox_shortcut.activated.connect(
+            self.annotation_details.edit_bbox_button.click
+        )
+
+        self.save_shortcut = QShortcut(
+            QKeySequence.Save,
+            self,
+        )
+        self.save_shortcut.setContext(
+            Qt.WidgetWithChildrenShortcut
+        )
+        self.save_shortcut.activated.connect(
+            self.save_button.click
+        )
+
+        self.shortcuts_help_shortcut = QShortcut(
+            QKeySequence("I"),
+            self,
+        )
+        self.shortcuts_help_shortcut.setContext(
+            Qt.WidgetWithChildrenShortcut
+        )
+        self.shortcuts_help_shortcut.activated.connect(
+            self.show_shortcuts_help
+        )
+
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
+
         self.previous_replace_shortcut = QShortcut(
             QKeySequence("Q"),
             self,
@@ -369,6 +481,10 @@ class MainWindow(QMainWindow):
 
         self.active_replace_keypoint_index = None
         self.replace_all_mode_active = False
+        self.add_bbox_mode_active = False
+        self.current_frame_index = None
+
+        self._update_bbox_action_buttons_state()
 
         # ---------------------------------
         # IMPORTANT:
@@ -387,54 +503,90 @@ class MainWindow(QMainWindow):
 
     def load_selected_frame(self, item):
 
-        if self.active_replace_keypoint_index is not None:
+        if self.add_bbox_mode_active:
+            self.exit_add_bbox_mode(commit=False)
+
+        if self.replace_all_mode_active:
+            self.exit_replace_all_mode()
+        elif self.active_replace_keypoint_index is not None:
             self.exit_keypoint_replace_mode()
 
-        frame_name = item.text()
+        self.load_frame_by_name(item.text())
 
-        image_path = (
-            self.frames_dir / frame_name
-        )
+    def load_frame_by_name(self, frame_name):
+
+        image_path = self.frames_dir / frame_name
 
         self.current_image_path = image_path
 
-        if (
-            frame_name
-            not in
-            self.images_by_filename
-        ):
-
+        if frame_name not in self.images_by_filename:
             return
 
-        image_info = (
-            self.images_by_filename[
-                frame_name
-            ]
+        self.current_frame_index = next(
+            (i for i, path in enumerate(self.image_paths) if path.name == frame_name),
+            None,
         )
 
-        image_id = image_info["id"]
+        self._reload_current_frame()
 
-        annotations = (
-            self.annotations_by_image_id.get(
-                image_id,
-                [],
-            )
+    def load_frame_by_index(self, frame_index):
+
+        if frame_index < 0 or frame_index >= len(self.image_paths):
+            return
+
+        self.current_frame_index = frame_index
+        self.load_frame_by_name(self.image_paths[frame_index].name)
+
+    def go_to_previous_frame(self):
+
+        if self.current_frame_index is None:
+            if self.image_paths:
+                self.load_frame_by_index(0)
+            return
+
+        previous_index = self.current_frame_index - 1
+        if previous_index < 0:
+            return
+
+        self.frame_list.setCurrentRow(previous_index)
+        self.load_frame_by_index(previous_index)
+
+    def go_to_next_frame(self):
+
+        if self.current_frame_index is None:
+            if self.image_paths:
+                self.load_frame_by_index(0)
+            return
+
+        next_index = self.current_frame_index + 1
+        if next_index >= len(self.image_paths):
+            return
+
+        self.frame_list.setCurrentRow(next_index)
+        self.load_frame_by_index(next_index)
+
+    def select_next_bbox(self):
+
+        if not self.canvas.bbox_items:
+            return
+
+        if self.canvas.selected_bbox_item not in self.canvas.bbox_items:
+            self.canvas.select_bbox_item(self.canvas.bbox_items[0])
+            return
+
+        current_index = self.canvas.bbox_items.index(
+            self.canvas.selected_bbox_item
         )
+        next_index = (current_index + 1) % len(self.canvas.bbox_items)
+        self.canvas.select_bbox_item(self.canvas.bbox_items[next_index])
 
-        self.canvas.load_image(
-            image_path=str(image_path),
-            annotations=annotations,
-        )
+    def eventFilter(self, watched, event):
 
-        if len(self.canvas.bbox_items) > 0:
+        if event.type() == QEvent.KeyPress and event.key() == Qt.Key_Tab:
+            self.select_next_bbox()
+            return True
 
-            first_bbox_item = (
-                self.canvas.bbox_items[0]
-            )
-
-            self.canvas.select_bbox_item(
-                first_bbox_item
-            )
+        return super().eventFilter(watched, event)
 
     def on_annotation_selected(
         self,
@@ -449,7 +601,11 @@ class MainWindow(QMainWindow):
             annotation
         )
 
+        self._update_bbox_action_buttons_state()
+
     def on_annotation_modified(self, annotation):
+
+        self._sync_annotation_metadata(annotation)
 
         self.canvas.update_annotation_visuals(annotation)
 
@@ -465,7 +621,313 @@ class MainWindow(QMainWindow):
             annotation
         )
 
+    def _sync_annotation_metadata(self, annotation):
+
+        bbox = annotation.get("bbox", [0, 0, 0, 0])
+        annotation["area"] = round(float(bbox[2]) * float(bbox[3]), 2)
+
+        keypoints = annotation.get("keypoints", [])
+        annotation["num_keypoints"] = sum(
+            1 for i in range(2, len(keypoints), 3) if keypoints[i] > 0
+        )
+
+    def _incomplete_annotations(self):
+
+        incomplete = []
+
+        for annotation in self.coco_data.get("annotations", []):
+            keypoints = annotation.get("keypoints", [])
+            visible_count = sum(
+                1 for i in range(2, len(keypoints), 3) if keypoints[i] > 0
+            )
+
+            if visible_count < len(KEYPOINT_NAMES):
+                incomplete.append((annotation, visible_count))
+
+        return incomplete
+
+    def _next_annotation_id(self):
+
+        return (
+            max(
+                (annotation.get("id", 0) for annotation in self.coco_data.get("annotations", [])),
+                default=0,
+            )
+            + 1
+        )
+
+    def _create_face_annotation(self, image_info, bbox):
+
+        x, y, w, h = bbox
+        category_id = self.coco_data.get("categories", [{"id": 1}])[0].get("id", 1)
+        keypoints = [0.0, 0.0, 0] * len(KEYPOINT_NAMES)
+
+        return {
+            "id": self._next_annotation_id(),
+            "image_id": image_info["id"],
+            "category_id": category_id,
+            "bbox": [round(x, 2), round(y, 2), round(w, 2), round(h, 2)],
+            "area": round(float(w) * float(h), 2),
+            "iscrowd": 0,
+            "confidence": 1.0,
+            "keypoints": keypoints,
+            "num_keypoints": 0,
+        }
+
+    def _reload_current_frame(self, select_annotation=None):
+
+        if self.current_image_path is None:
+            self.annotation_details.clear_annotation()
+            self._clear_crop_preview()
+            self._update_bbox_action_buttons_state()
+            return
+
+        frame_name = self.current_image_path.name
+        image_info = self.images_by_filename.get(frame_name)
+
+        if image_info is None:
+            self.annotation_details.clear_annotation()
+            self._clear_crop_preview()
+            self._update_bbox_action_buttons_state()
+            return
+
+        image_id = image_info["id"]
+        annotations = self.annotations_by_image_id.get(image_id, [])
+
+        self.canvas.load_image(
+            image_path=str(self.current_image_path),
+            annotations=annotations,
+        )
+
+        selected_item = None
+
+        if select_annotation is not None:
+            select_id = select_annotation.get("id")
+
+            for bbox_item in self.canvas.bbox_items:
+                if bbox_item.annotation is select_annotation or bbox_item.annotation.get("id") == select_id:
+                    selected_item = bbox_item
+                    break
+
+        if selected_item is None and len(self.canvas.bbox_items) > 0:
+            selected_item = self.canvas.bbox_items[0]
+
+        if selected_item is not None:
+            self.canvas.select_bbox_item(selected_item)
+        else:
+            self.annotation_details.clear_annotation()
+            self._clear_crop_preview()
+
+        self._update_bbox_action_buttons_state()
+
+    def _update_bbox_action_buttons_state(self):
+
+        has_selection = self.canvas.selected_bbox_item is not None
+
+        if self.add_bbox_mode_active:
+            self.annotation_details.add_bbox_button.setEnabled(True)
+            self.annotation_details.del_bbox_button.setEnabled(False)
+            self.annotation_details.replace_all_button.setEnabled(False)
+            return
+
+        if self.active_replace_keypoint_index is not None:
+            self.annotation_details.add_bbox_button.setEnabled(False)
+            self.annotation_details.del_bbox_button.setEnabled(False)
+            self.annotation_details.replace_all_button.setEnabled(False)
+            return
+
+        self.annotation_details.add_bbox_button.setEnabled(True)
+        self.annotation_details.del_bbox_button.setEnabled(has_selection)
+        self.annotation_details.replace_all_button.setEnabled(has_selection)
+
+    def on_keypoints_edit_toggled(self, enabled):
+
+        self.canvas.set_keypoint_editable(enabled)
+
+        if enabled:
+            self._set_mode_hint(
+                "Edit Keypoints: drag the points."
+            )
+        elif not self.add_bbox_mode_active and self.active_replace_keypoint_index is None and not self.replace_all_mode_active:
+            self.set_replace_status_message(self._inactive_hint())
+
+    def on_bbox_edit_toggled(self, enabled):
+
+        self.canvas.set_bbox_editable(enabled)
+
+        if enabled:
+            self._set_mode_hint(
+                "Edit Bounding Box: drag the box or handles."
+            )
+        elif not self.add_bbox_mode_active and self.active_replace_keypoint_index is None and not self.replace_all_mode_active:
+            self.set_replace_status_message(self._inactive_hint())
+
+    def _set_mode_hint(self, message):
+
+        self.set_replace_status_message(message)
+
+    def _inactive_hint(self):
+
+        return "No buttons selected. Press [I] for shortcuts"
+
+    def show_shortcuts_help(self):
+
+        shortcuts_text = (
+            "Keyboard Shortcuts\n\n"
+            "I - show this shortcut list.\n"
+            "W / S - move to previous / next frame.\n"
+            "Tab - cycle to the next bbox in the current frame.\n"
+            "B - trigger Add Bbox.\n"
+            "Delete - trigger Del Bbox.\n"
+            "R - trigger Replace All.\n"
+            "C - toggle Edit Keypoints.\n"
+            "V - toggle Edit Bounding Box.\n"
+            "Ctrl+S - trigger Save Annotations.\n"
+            "E - exit the current mode when replacing keypoints/adding bbox."
+        )
+
+        QMessageBox.information(
+            self,
+            "Keyboard Shortcuts",
+            shortcuts_text,
+        )
+
+    def on_add_bbox_requested(self, checked):
+
+        if checked:
+            self.enter_add_bbox_mode()
+        else:
+            self.exit_add_bbox_mode(
+                commit=False,
+                start_replace_all=False,
+            )
+
+    def enter_add_bbox_mode(self):
+
+        if self.active_replace_keypoint_index is not None:
+            self.exit_keypoint_replace_mode()
+
+        self.add_bbox_mode_active = True
+        self.canvas.set_add_bbox_mode(True)
+        self.annotation_details.set_add_bbox_checked(True)
+
+        self.annotation_details.edit_keypoints_button.setChecked(False)
+        self.annotation_details.edit_bbox_button.setChecked(False)
+
+        self.canvas.set_keypoint_editable(False)
+        self.canvas.set_bbox_editable(False)
+
+        self.annotation_details.set_controls_enabled(False)
+        self.annotation_details.add_bbox_button.setEnabled(True)
+        self.annotation_details.del_bbox_button.setEnabled(False)
+        self._set_mode_hint(
+            "Add Bbox: drag to draw. Press E or Add Bbox again to finish."
+        )
+        self._update_bbox_action_buttons_state()
+
+    def exit_add_bbox_mode(self, commit=False, start_replace_all=False):
+
+        if not self.add_bbox_mode_active and not self.canvas.add_bbox_mode_active:
+            return None
+
+        self.add_bbox_mode_active = False
+
+        new_annotation = None
+
+        if commit:
+            new_annotation = self._commit_pending_add_bbox()
+
+        self.canvas.clear_add_bbox_mode()
+        self.annotation_details.set_add_bbox_checked(False)
+
+        self.annotation_details.set_controls_enabled(True)
+        self.set_replace_status_message(self._inactive_hint())
+
+        if new_annotation is not None:
+            self._reload_current_frame(select_annotation=new_annotation)
+
+        self._update_bbox_action_buttons_state()
+
+        if commit and start_replace_all and new_annotation is not None:
+            self.on_replace_all_requested()
+
+        return new_annotation
+
+    def _commit_pending_add_bbox(self):
+
+        pending_rect = self.canvas.pending_add_bbox_rect()
+
+        if pending_rect is None:
+            return None
+
+        if pending_rect.width() < 1 or pending_rect.height() < 1:
+            return None
+
+        image_info = self.images_by_filename.get(
+            self.current_image_path.name if self.current_image_path is not None else ""
+        )
+
+        if image_info is None:
+            return None
+
+        scene_rect = self.canvas.sceneRect()
+        final_rect = pending_rect.intersected(scene_rect)
+
+        if final_rect.width() < 1 or final_rect.height() < 1:
+            return None
+
+        new_annotation = self._create_face_annotation(
+            image_info,
+            (
+                final_rect.x(),
+                final_rect.y(),
+                final_rect.width(),
+                final_rect.height(),
+            ),
+        )
+
+        self.coco_data["annotations"].append(new_annotation)
+        self.annotations_by_image_id.setdefault(image_info["id"], []).append(
+            new_annotation
+        )
+
+        return new_annotation
+
+    def on_delete_bbox_requested(self):
+
+        if self.add_bbox_mode_active:
+            self.exit_add_bbox_mode(commit=False)
+
+        if self.replace_all_mode_active:
+            self.exit_replace_all_mode()
+        elif self.active_replace_keypoint_index is not None:
+            self.exit_keypoint_replace_mode()
+
+        selected_item = self.canvas.selected_bbox_item
+
+        if selected_item is None or selected_item.annotation is None:
+            return
+
+        annotation = selected_item.annotation
+        image_id = annotation.get("image_id")
+
+        self.coco_data["annotations"] = [
+            item for item in self.coco_data.get("annotations", [])
+            if item is not annotation
+        ]
+
+        if image_id in self.annotations_by_image_id:
+            self.annotations_by_image_id[image_id] = [
+                item for item in self.annotations_by_image_id[image_id]
+                if item is not annotation
+            ]
+
+        self._reload_current_frame()
+
     def on_keypoint_replace_requested(self, keypoint_index):
+
+        if self.add_bbox_mode_active:
+            self.exit_add_bbox_mode(commit=False)
 
         self.replace_all_mode_active = False
         self.active_replace_keypoint_index = keypoint_index
@@ -486,14 +948,18 @@ class MainWindow(QMainWindow):
             False,
             active_replace_index=keypoint_index,
         )
-        self.set_replace_status_message(
-            self._single_replace_prompt_text(keypoint_index)
+        self._set_mode_hint(
+            f"Keypoint Replace: click {KEYPOINT_NAMES[keypoint_index] if keypoint_index < len(KEYPOINT_NAMES) else 'the keypoint'}. Press E to exit."
         )
+        self._update_bbox_action_buttons_state()
 
     def on_replace_all_requested(self):
 
         if self.annotation_details.current_annotation is None:
             return
+
+        if self.add_bbox_mode_active:
+            self.exit_add_bbox_mode(commit=False)
 
         self.replace_all_mode_active = True
         self.active_replace_keypoint_index = 0
@@ -512,9 +978,10 @@ class MainWindow(QMainWindow):
             False,
             active_replace_index=0,
         )
-        self.set_replace_status_message(
-            self._replace_prompt_text(0)
+        self._set_mode_hint(
+            "Replace All: click keypoints in order. E next, Q previous."
         )
+        self._update_bbox_action_buttons_state()
 
     def advance_replace_all_mode(self):
 
@@ -541,9 +1008,10 @@ class MainWindow(QMainWindow):
             False,
             active_replace_index=next_index,
         )
-        self.set_replace_status_message(
-            self._replace_prompt_text(next_index)
+        self._set_mode_hint(
+            "Replace All: click keypoints in order. E next, Q previous."
         )
+        self._update_bbox_action_buttons_state()
 
     def _on_q_pressed(self):
         # In Replace-All, Q moves back to the previous keypoint if possible.
@@ -565,11 +1033,19 @@ class MainWindow(QMainWindow):
             False,
             active_replace_index=previous_index,
         )
-        self.set_replace_status_message(
-            self._replace_prompt_text(previous_index)
+        self._set_mode_hint(
+            "Replace All: click keypoints in order. E next, Q previous."
         )
+        self._update_bbox_action_buttons_state()
 
     def _on_e_pressed(self):
+        if self.add_bbox_mode_active:
+            self.exit_add_bbox_mode(
+                commit=True,
+                start_replace_all=True,
+            )
+            return
+
         # If Replace-All is active, E advances the sequence. Otherwise,
         # if we're in a single-key replace mode, E should exit that mode.
         if self.replace_all_mode_active:
@@ -579,9 +1055,7 @@ class MainWindow(QMainWindow):
         if self.active_replace_keypoint_index is not None:
             self.exit_keypoint_replace_mode()
             # update status to show inactive
-            self.set_replace_status_message(
-                "Replace mode inactive"
-            )
+            self.set_replace_status_message(self._inactive_hint())
 
     def exit_replace_all_mode(self):
 
@@ -638,7 +1112,8 @@ class MainWindow(QMainWindow):
         self.canvas.clear_active_keypoint_index()
 
         self.annotation_details.set_controls_enabled(True)
-        self.set_replace_status_message("Replace mode inactive")
+        self.set_replace_status_message(self._inactive_hint())
+        self._update_bbox_action_buttons_state()
 
     def set_replace_status_message(self, message):
 
@@ -649,6 +1124,22 @@ class MainWindow(QMainWindow):
         self,
         annotation,
     ):
+
+        if annotation is None:
+            self._clear_crop_preview()
+            return
+
+        bbox = annotation.get("bbox")
+
+        if not bbox or len(bbox) < 4:
+            self._clear_crop_preview()
+            return
+
+        x, y, w, h = bbox
+
+        if w <= 0 or h <= 0:
+            self._clear_crop_preview()
+            return
 
         from PySide6.QtGui import (
             QPainter,
@@ -661,9 +1152,9 @@ class MainWindow(QMainWindow):
             str(self.current_image_path)
         )
 
-        bbox = annotation["bbox"]
-
-        x, y, w, h = bbox
+        if pixmap.isNull():
+            self._clear_crop_preview()
+            return
 
         # =================================
         # Crop face region
@@ -742,8 +1233,31 @@ class MainWindow(QMainWindow):
             scaled
         )
 
+    def _clear_crop_preview(self):
+
+        self.crop_preview.setPixmap(QPixmap())
+        self.crop_preview.setText("")
+
     def save_annotations(self):
         try:
+            for annotation in self.coco_data.get("annotations", []):
+                self._sync_annotation_metadata(annotation)
+
+            incomplete = self._incomplete_annotations()
+
+            if incomplete:
+                first_annotation, visible_count = incomplete[0]
+                annotation_id = first_annotation.get("id", "unknown")
+                QMessageBox.critical(
+                    self,
+                    "Save Failed",
+                    (
+                        "Cannot save yet. Each bounding box must have all 5 keypoints placed.\n\n"
+                        f"Annotation id {annotation_id} currently has {visible_count}/5 keypoints."
+                    ),
+                )
+                return
+
             with open(
                 self.annotations_path,
                 "w",

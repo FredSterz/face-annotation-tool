@@ -96,9 +96,19 @@ class FaceBBoxItem(QGraphicsRectItem):
         self.default_pen.setWidth(1)
         self.default_pen.setCosmetic(True)
 
-        self.selected_pen = QPen(Qt.yellow)
+        self.selected_pen = QPen(QColor(0, 255, 255))
         self.selected_pen.setWidth(1)
         self.selected_pen.setCosmetic(True)
+
+        self.selected_outline = QGraphicsRectItem(self)
+        selected_outline_pen = QPen(Qt.white)
+        selected_outline_pen.setWidth(1)
+        selected_outline_pen.setCosmetic(True)
+        self.selected_outline.setPen(selected_outline_pen)
+        self.selected_outline.setBrush(QBrush(Qt.NoBrush))
+        self.selected_outline.setZValue(-1)
+        self.selected_outline.setAcceptedMouseButtons(Qt.NoButton)
+        self.selected_outline.hide()
 
         self.edit_pen = QPen(Qt.red)
         self.edit_pen.setWidth(1)
@@ -142,14 +152,22 @@ class FaceBBoxItem(QGraphicsRectItem):
 
         if self.is_selected:
             self.setPen(self.selected_pen)
+            self.selected_outline.show()
         elif self.is_editable:
             self.setPen(self.edit_pen)
+            self.selected_outline.hide()
         else:
             self.setPen(self.default_pen)
+            self.selected_outline.hide()
 
     def _update_handles(self):
 
         rect = self.rect()
+
+        if self.is_selected:
+            self.selected_outline.setRect(
+                rect.adjusted(-0.75, -0.75, 0.75, 0.75)
+            )
 
         positions = {
             "top_left": QPointF(rect.left(), rect.top()),

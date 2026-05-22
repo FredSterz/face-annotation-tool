@@ -1,8 +1,10 @@
-from PySide6.QtCore import Signal, Qt
-from PySide6.QtGui import QPainter, QPixmap
+from PySide6.QtCore import QPointF, QRectF, Signal, Qt
+from PySide6.QtGui import QColor, QPainter, QPixmap, QPen, QBrush
 from PySide6.QtWidgets import (
+    QGraphicsItem,
     QGraphicsPixmapItem,
     QGraphicsScene,
+    QGraphicsRectItem,
     QGraphicsView,
 )
 from graphics.bbox_item import FaceBBoxItem
@@ -56,6 +58,9 @@ class AnnotationCanvas(QGraphicsView):
         self._bbox_drag_offset = None
         self.keypoint_replace_mode_index = None
         self.keypoint_replace_all_mode_active = False
+        self.add_bbox_mode_active = False
+        self._add_bbox_start_scene_pos = None
+        self._add_bbox_preview_item = None
 
     def load_image(self, image_path, annotations):
         self.current_image_path = image_path
@@ -73,6 +78,7 @@ class AnnotationCanvas(QGraphicsView):
         self.keypoint_items = []
         self.selected_bbox_item = None
         self.active_keypoint_index = None
+        self._clear_add_bbox_preview()
 
         if not self.current_image_path:
             return
@@ -109,9 +115,6 @@ class AnnotationCanvas(QGraphicsView):
                 py = keypoints[i + 1]
                 vis = keypoints[i + 2]
 
-                if vis == 0:
-                    continue
-
                 kp_item = KeypointItem(
                     x=px,
                     y=py,
@@ -122,6 +125,7 @@ class AnnotationCanvas(QGraphicsView):
                     geometry_changed_callback=self._on_keypoint_geometry_changed,
                 )
                 kp_item.set_editable(self.keypoint_editable)
+                kp_item.setVisible(vis > 0)
                 self.scene.addItem(kp_item)
                 self.keypoint_items.append(kp_item)
 
@@ -153,6 +157,7 @@ class AnnotationCanvas(QGraphicsView):
                 keypoints[offset],
                 keypoints[offset + 1],
             )
+            item.setVisible(keypoints[offset + 2] > 0)
 
     def set_active_keypoint_index(self, keypoint_index):
 
@@ -174,6 +179,77 @@ class AnnotationCanvas(QGraphicsView):
         self.keypoint_replace_mode_index = None
         self._update_navigation_mode()
 
+    def set_add_bbox_mode(self, enabled):
+
+        self.add_bbox_mode_active = enabled
+
+        if not enabled:
+            self._add_bbox_start_scene_pos = None
+            self._clear_add_bbox_preview()
+
+        self._update_navigation_mode()
+
+    def pending_add_bbox_rect(self):
+
+        if self._add_bbox_preview_item is None:
+            return None
+
+        rect = self._add_bbox_preview_item.rect()
+        if rect.isNull():
+            return None
+
+        return rect.normalized()
+
+    def _ensure_add_bbox_preview_item(self):
+
+        if self._add_bbox_preview_item is not None:
+            return self._add_bbox_preview_item
+
+        preview_item = QGraphicsRectItem()
+        preview_item.setZValue(40)
+        preview_item.setBrush(QBrush(Qt.NoBrush))
+
+        pen = QPen(QColor(255, 215, 0))
+        pen.setWidth(1)
+        pen.setCosmetic(True)
+        pen.setStyle(Qt.DashLine)
+        preview_item.setPen(pen)
+        preview_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+        preview_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+
+        self.scene.addItem(preview_item)
+        self._add_bbox_preview_item = preview_item
+        return preview_item
+
+    def _update_add_bbox_preview(self, start_pos, end_pos):
+
+        preview_item = self._ensure_add_bbox_preview_item()
+        rect = QRectF(start_pos, end_pos).normalized()
+        preview_item.setRect(rect)
+
+    def _clear_add_bbox_preview(self):
+
+        if self._add_bbox_preview_item is not None:
+            if self._add_bbox_preview_item.scene() is self.scene:
+                self.scene.removeItem(self._add_bbox_preview_item)
+            self._add_bbox_preview_item = None
+
+    def clear_add_bbox_mode(self):
+
+        self.set_add_bbox_mode(False)
+
+    @staticmethod
+    def _bbox_item_from_scene_item(item):
+
+        current_item = item
+
+        while current_item is not None:
+            if isinstance(current_item, FaceBBoxItem):
+                return current_item
+            current_item = current_item.parentItem()
+
+        return None
+
     def update_annotation_visuals(self, annotation):
 
         for bbox_item in self.bbox_items:
@@ -185,10 +261,15 @@ class AnnotationCanvas(QGraphicsView):
             if item.annotation is annotation:
 
                 bbox = annotation.get("bbox", [0, 0, 0, 0])
+                keypoints = annotation.get("keypoints", [])
+                offset = item.keypoint_index * 3
 
                 item.set_radius(
                     self._keypoint_radius_from_bbox(bbox)
                 )
+
+                if offset + 2 < len(keypoints):
+                    item.setVisible(keypoints[offset + 2] > 0)
 
         self._update_keypoint_highlights()
 
@@ -207,6 +288,16 @@ class AnnotationCanvas(QGraphicsView):
     def mousePressEvent(self, event):
         scene_pos = self.mapToScene(event.pos())
         item = self.scene.itemAt(scene_pos, self.transform())
+
+        if self.add_bbox_mode_active:
+            if event.button() != Qt.LeftButton:
+                event.accept()
+                return
+
+            self._add_bbox_start_scene_pos = scene_pos
+            self._update_add_bbox_preview(scene_pos, scene_pos)
+            event.accept()
+            return
 
         if self.keypoint_replace_mode_index is not None:
 
@@ -233,20 +324,20 @@ class AnnotationCanvas(QGraphicsView):
 
         picked_bbox = None
 
-        if isinstance(item, FaceBBoxItem):
-            picked_bbox = item
-        elif isinstance(item, BBoxHandleItem):
+        if isinstance(item, BBoxHandleItem):
             picked_bbox = item.parent_bbox_item
+        else:
+            picked_bbox = self._bbox_item_from_scene_item(item)
 
         if picked_bbox is not None:
             self.select_bbox_item(picked_bbox)
 
         if (
             self.bbox_editable
-            and isinstance(item, FaceBBoxItem)
+            and picked_bbox is not None
         ):
-            rect = item.rect()
-            self._dragging_bbox_item = item
+            rect = picked_bbox.rect()
+            self._dragging_bbox_item = picked_bbox
             self._bbox_drag_offset = (
                 scene_pos.x() - rect.left(),
                 scene_pos.y() - rect.top(),
@@ -275,6 +366,14 @@ class AnnotationCanvas(QGraphicsView):
     def mouseMoveEvent(self, event):
 
         scene_pos = self.mapToScene(event.pos())
+
+        if self.add_bbox_mode_active and self._add_bbox_start_scene_pos is not None:
+            self._update_add_bbox_preview(
+                self._add_bbox_start_scene_pos,
+                scene_pos,
+            )
+            event.accept()
+            return
 
         if self.selected_bbox_item is not None:
 
@@ -307,6 +406,16 @@ class AnnotationCanvas(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+
+        if self.add_bbox_mode_active and self._add_bbox_start_scene_pos is not None:
+            scene_pos = self.mapToScene(event.pos())
+            self._update_add_bbox_preview(
+                self._add_bbox_start_scene_pos,
+                scene_pos,
+            )
+            self._add_bbox_start_scene_pos = None
+            event.accept()
+            return
 
         if self.selected_bbox_item is not None:
             self.selected_bbox_item.end_resize()
@@ -347,6 +456,7 @@ class AnnotationCanvas(QGraphicsView):
         if (
             self.keypoint_editable
             or self.bbox_editable
+            or self.add_bbox_mode_active
             or self.keypoint_replace_mode_index is not None
         ):
             self.setDragMode(QGraphicsView.DragMode.NoDrag)

@@ -86,7 +86,7 @@ class KeypointItem(QGraphicsEllipseItem):
 
         if highlighted:
             pen = QPen(Qt.black)
-            pen.setWidth(1)
+            pen.setWidth(2)
             pen.setCosmetic(True)
             self.setPen(pen)
             self.setZValue(11)

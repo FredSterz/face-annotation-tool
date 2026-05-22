@@ -21,6 +21,10 @@ class AnnotationDetailsPanel(QWidget):
 
     bbox_edit_requested = Signal(bool)
 
+    add_bbox_requested = Signal(bool)
+
+    delete_bbox_requested = Signal()
+
     keypoint_replace_requested = Signal(int)
 
     replace_all_requested = Signal()
@@ -39,12 +43,18 @@ class AnnotationDetailsPanel(QWidget):
 
         self.keypoint_inputs = []
         self.keypoint_replace_buttons = []
+        self.add_bbox_button = QPushButton(
+            "Add Bbox (B)"
+        )
+        self.del_bbox_button = QPushButton(
+            "Del Bbox (Delete)"
+        )
         self.replace_all_button = QPushButton(
-            "Replace All"
+            "Replace All (R)"
         )
 
         self.replace_status_label = QLabel(
-            "Replace mode inactive"
+            "No buttons selected. Press [I] for shortcuts"
         )
 
         self.layout = QVBoxLayout()
@@ -65,13 +75,13 @@ class AnnotationDetailsPanel(QWidget):
         # =================================
         self.edit_keypoints_button = (
             QPushButton(
-                "Edit Keypoints"
+                "Edit Keypoints (C)"
             )
         )
 
         self.edit_bbox_button = (
             QPushButton(
-                "Edit Bounding Box"
+                "Edit Bounding Box (V)"
             )
         )
 
@@ -89,6 +99,16 @@ class AnnotationDetailsPanel(QWidget):
 
         self.layout.addWidget(
             self.edit_bbox_button
+        )
+
+        self.add_bbox_button.setCheckable(True)
+
+        self.layout.addWidget(
+            self.add_bbox_button
+        )
+
+        self.layout.addWidget(
+            self.del_bbox_button
         )
 
         self.layout.addWidget(
@@ -191,9 +211,31 @@ class AnnotationDetailsPanel(QWidget):
             self.toggle_bbox_editing
         )
 
+        self.add_bbox_button.toggled.connect(
+            self.add_bbox_requested.emit
+        )
+
+        self.del_bbox_button.clicked.connect(
+            self.delete_bbox_requested.emit
+        )
+
         self.replace_all_button.clicked.connect(
             self.replace_all_requested.emit
         )
+
+    def set_add_bbox_checked(self, checked):
+
+        was_blocked = self.add_bbox_button.blockSignals(True)
+        self.add_bbox_button.setChecked(checked)
+        self.add_bbox_button.blockSignals(was_blocked)
+
+    def set_bbox_action_buttons_enabled(self, enabled):
+
+        self.del_bbox_button.setEnabled(enabled)
+
+    def set_add_bbox_enabled(self, enabled):
+
+        self.add_bbox_button.setEnabled(enabled)
 
     def set_annotation(self, annotation):
 
@@ -312,6 +354,31 @@ class AnnotationDetailsPanel(QWidget):
         self._is_loading_annotation = False
         self._update_replace_button_styles()
 
+    def clear_annotation(self):
+
+        self.current_annotation = None
+        self._is_loading_annotation = True
+
+        self.bbox_x.setValue(0)
+        self.bbox_y.setValue(0)
+        self.bbox_w.setValue(0)
+        self.bbox_h.setValue(0)
+
+        while self.keypoints_layout.count():
+            child = self.keypoints_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        self.keypoint_inputs.clear()
+        self.keypoint_replace_buttons.clear()
+
+        self._is_loading_annotation = False
+        self.replace_mode_index = None
+        self.replace_status_label.setText(
+            "No buttons selected. Press [I] for shortcuts"
+        )
+        self._update_replace_button_styles()
+
     def sync_bbox_from_annotation(self, annotation):
 
         if self.current_annotation is not annotation:
@@ -366,7 +433,7 @@ class AnnotationDetailsPanel(QWidget):
         self.replace_mode_index = None
         self.replace_mode_cleared.emit()
         self.replace_status_label.setText(
-            "Replace mode inactive"
+            "No buttons selected. Press [I] for shortcuts"
         )
         self._update_replace_button_styles()
 
@@ -391,6 +458,8 @@ class AnnotationDetailsPanel(QWidget):
         for i, button in enumerate(self.keypoint_replace_buttons):
             button.setEnabled(enabled)
 
+        self.replace_all_button.setEnabled(enabled)
+
         self.replace_mode_index = active_replace_index
         if active_replace_index is not None:
             if active_replace_index < len(KEYPOINT_NAMES):
@@ -403,7 +472,7 @@ class AnnotationDetailsPanel(QWidget):
                 )
         else:
             self.replace_status_label.setText(
-                "Replace mode inactive"
+                "No buttons selected. Press [I] for shortcuts"
             )
         self._update_replace_button_styles()
 
