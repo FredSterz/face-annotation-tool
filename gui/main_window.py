@@ -245,6 +245,7 @@ class MainWindow(QMainWindow):
 
         # LOOKUP TABLES
         self.images_by_filename = {}
+        self.images_by_id = {}
 
         for image_info in (
             self.coco_data["images"]
@@ -257,6 +258,7 @@ class MainWindow(QMainWindow):
             self.images_by_filename[
                 filename
             ] = image_info
+            self.images_by_id[image_info["id"]] = image_info
 
         self.annotations_by_image_id = {}
 
@@ -636,13 +638,15 @@ class MainWindow(QMainWindow):
         incomplete = []
 
         for annotation in self.coco_data.get("annotations", []):
+            image_info = self.images_by_id.get(annotation.get("image_id"))
+            frame_name = Path(image_info["file_name"]).name if image_info else "<unknown frame>"
             keypoints = annotation.get("keypoints", [])
             visible_count = sum(
                 1 for i in range(2, len(keypoints), 3) if keypoints[i] > 0
             )
 
             if visible_count < len(KEYPOINT_NAMES):
-                incomplete.append((annotation, visible_count))
+                incomplete.append((annotation, visible_count, frame_name))
 
         return incomplete
 
@@ -693,6 +697,8 @@ class MainWindow(QMainWindow):
 
         image_id = image_info["id"]
         annotations = self.annotations_by_image_id.get(image_id, [])
+
+        self.annotation_details.set_bbox_count(len(annotations))
 
         self.canvas.load_image(
             image_path=str(self.current_image_path),
@@ -1246,14 +1252,26 @@ class MainWindow(QMainWindow):
             incomplete = self._incomplete_annotations()
 
             if incomplete:
-                first_annotation, visible_count = incomplete[0]
-                annotation_id = first_annotation.get("id", "unknown")
+                missing_by_frame = {}
+
+                for _annotation, visible_count, frame_name in incomplete:
+                    missing_by_frame.setdefault(frame_name, []).append(visible_count)
+
+                missing_lines = []
+
+                for frame_name in sorted(missing_by_frame):
+                    counts = missing_by_frame[frame_name]
+                    missing_lines.append(
+                        f"- {frame_name}: {len(counts)} incomplete bbox(s), visible keypoints: {', '.join(str(count) + '/5' for count in counts)}"
+                    )
+
                 QMessageBox.critical(
                     self,
                     "Save Failed",
                     (
                         "Cannot save yet. Each bounding box must have all 5 keypoints placed.\n\n"
-                        f"Annotation id {annotation_id} currently has {visible_count}/5 keypoints."
+                        "Frames missing keypoints:\n"
+                        + "\n".join(missing_lines)
                     ),
                 )
                 return

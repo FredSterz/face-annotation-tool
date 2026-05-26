@@ -70,6 +70,17 @@ class AnnotationDetailsPanel(QWidget):
             self.title_label
         )
 
+        self.bbox_count_label = QLabel(
+            "Bboxes in frame: 0"
+        )
+        self.bbox_count_label.setStyleSheet(
+            "color: #dcdcdc; font-weight: bold;"
+        )
+
+        self.layout.addWidget(
+            self.bbox_count_label
+        )
+
         # =================================
         # EDIT BUTTONS
         # =================================
@@ -233,6 +244,12 @@ class AnnotationDetailsPanel(QWidget):
 
         self.del_bbox_button.setEnabled(enabled)
 
+    def set_bbox_count(self, count):
+
+        self.bbox_count_label.setText(
+            f"Bboxes in frame: {count}"
+        )
+
     def set_add_bbox_enabled(self, enabled):
 
         self.add_bbox_button.setEnabled(enabled)
@@ -358,6 +375,7 @@ class AnnotationDetailsPanel(QWidget):
 
         self.current_annotation = None
         self._is_loading_annotation = True
+        self.set_bbox_count(0)
 
         self.bbox_x.setValue(0)
         self.bbox_y.setValue(0)
