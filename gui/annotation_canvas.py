@@ -267,9 +267,7 @@ class AnnotationCanvas(QGraphicsView):
                 item.set_radius(
                     self._keypoint_radius_from_bbox(bbox)
                 )
-
-                if offset + 2 < len(keypoints):
-                    item.setVisible(keypoints[offset + 2] > 0)
+                item.sync_from_annotation()
 
         self._update_keypoint_highlights()
 

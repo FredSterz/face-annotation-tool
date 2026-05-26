@@ -80,6 +80,31 @@ class KeypointItem(QGraphicsEllipseItem):
             radius * 2,
         )
 
+    def sync_from_annotation(self):
+
+        if self.annotation is None:
+            return
+
+        keypoints = self.annotation.get("keypoints", [])
+        offset = self.keypoint_index * 3
+
+        if offset + 1 >= len(keypoints):
+            return
+
+        was_suppressed = self._suppress_geometry_notifications
+        self._suppress_geometry_notifications = True
+
+        try:
+            self.setPos(
+                keypoints[offset],
+                keypoints[offset + 1],
+            )
+        finally:
+            self._suppress_geometry_notifications = was_suppressed
+
+        if offset + 2 < len(keypoints):
+            self.setVisible(keypoints[offset + 2] > 0)
+
     def set_highlighted(self, highlighted):
 
         self.is_highlighted = highlighted

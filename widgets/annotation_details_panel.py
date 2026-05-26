@@ -31,7 +31,7 @@ class AnnotationDetailsPanel(QWidget):
 
     replace_mode_cleared = Signal()
 
-    annotation_changed = Signal()
+    annotation_changed = Signal(object)
 
     def __init__(self):
 
@@ -163,6 +163,7 @@ class AnnotationDetailsPanel(QWidget):
             )
 
             widget.setDecimals(2)
+            widget.setKeyboardTracking(False)
 
             widget.setEnabled(False)
 
@@ -314,6 +315,7 @@ class AnnotationDetailsPanel(QWidget):
                 )
 
                 widget.setDecimals(2)
+                widget.setKeyboardTracking(False)
 
                 widget.setEnabled(False)
 
@@ -574,7 +576,7 @@ class AnnotationDetailsPanel(QWidget):
         bbox[2] = self.bbox_w.value()
         bbox[3] = self.bbox_h.value()
 
-        self.annotation_changed.emit()
+        self.annotation_changed.emit(self.current_annotation)
 
     def update_keypoints(self):
 
@@ -610,4 +612,4 @@ class AnnotationDetailsPanel(QWidget):
                 y_input.value()
             )
 
-        self.annotation_changed.emit()
+        self.annotation_changed.emit(self.current_annotation)
